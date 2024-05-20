@@ -27,6 +27,30 @@ pub(crate) fn component_to_tokens(
         }
     });
 
+    let spread_bindings = node.attributes().iter().filter_map(|node| {
+        use rstml::node::NodeBlock;
+        use syn::{Expr, ExprRange, RangeLimits, Stmt};
+
+        if let NodeAttribute::Block(NodeBlock::ValidBlock(block)) = node {
+            match block.stmts.first()? {
+                Stmt::Expr(
+                    Expr::Range(ExprRange {
+                        start: None,
+                        limits: RangeLimits::HalfOpen(_),
+                        end: Some(end),
+                        ..
+                    }),
+                    _,
+                ) => Some(
+                    quote! { .dyn_bindings(#[allow(unused_brace)] {#end}) },
+                ),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    });
+
     let props = attrs
         .clone()
         .filter(|attr| {
@@ -213,24 +237,17 @@ pub(crate) fn component_to_tokens(
 
     #[allow(unused_mut)] // used in debug
     let mut component = quote_spanned! {node.span()=>
-        {
-            let props = #component_props_builder
+        ::leptos::component_view(
+            #[allow(clippy::needless_borrows_for_generic_args)]
+            #name_ref,
+            #component_props_builder
                 #(#props)*
                 #(#slots)*
-                #children;
-
-            #[allow(clippy::let_unit_value, clippy::unit_arg)]
-            let props = props
+                #children
                 #build
-                #dyn_attrs;
-
-            #[allow(unreachable_code)]
-            ::leptos::component_view(
-                #[allow(clippy::needless_borrows_for_generic_args)]
-                #name_ref,
-                props
-            )
-        }
+                #dyn_attrs
+                #(#spread_bindings)*
+        )
     };
 
     // (Temporarily?) removed

@@ -178,6 +178,18 @@ impl ToTokens for Model {
         );
 
         let component_fn_prop_docs = generate_component_fn_prop_docs(props);
+        let docs_and_prop_docs = if component_fn_prop_docs.is_empty() {
+            // Avoid generating an empty doc line in case the component has no doc and no props.
+            quote! {
+                #docs
+            }
+        } else {
+            quote! {
+                #docs
+                #[doc = ""]
+                #component_fn_prop_docs
+            }
+        };
 
         let (
             tracing_instrument_attr,
@@ -365,6 +377,33 @@ impl ToTokens for Model {
             })
             .collect::<TokenStream>();
 
+        let dyn_binding_props = props
+            .iter()
+            .filter(
+                |Prop {
+                     prop_opts: PropOpt { attrs, .. },
+                     ..
+                 }| *attrs,
+            )
+            .filter_map(
+                |Prop {
+                     name,
+                     prop_opts: PropOpt { attrs, .. },
+                     ..
+                 }| {
+                    let ident = &name.ident;
+
+                    if *attrs {
+                        Some(quote! {
+                            ::leptos::leptos_dom::html::Binding::Attribute { name, value } => self.#ident.push((name, value)),
+                        })
+                    } else {
+                        None
+                    }
+                },
+            )
+            .collect::<TokenStream>();
+
         let body = quote! {
             #destructure_props
             #tracing_span_expr
@@ -475,9 +514,7 @@ impl ToTokens for Model {
         let output = quote! {
             #[doc = #builder_name_doc]
             #[doc = ""]
-            #docs
-            #[doc = ""]
-            #component_fn_prop_docs
+            #docs_and_prop_docs
             #[derive(::leptos::typed_builder_macro::TypedBuilder #props_derive_serialize)]
             //#[builder(doc)]
             #[builder(crate_module_path=::leptos::typed_builder)]
@@ -504,11 +541,24 @@ impl ToTokens for Model {
                 }
             }
 
+            impl #impl_generics #props_name #generics #where_clause {
+                fn dyn_bindings<B: Into<::leptos::leptos_dom::html::Binding>>(mut self, bindings: impl std::iter::IntoIterator<Item = B>) -> Self {
+                    for binding in bindings.into_iter() {
+                        let binding: ::leptos::leptos_dom::html::Binding = binding.into();
+
+                        match binding {
+                            #dyn_binding_props
+                            _ => {}
+                        }
+                    }
+
+                    self
+                }
+            }
+
             #into_view
 
-            #docs
-            #[doc = ""]
-            #component_fn_prop_docs
+            #docs_and_prop_docs
             #[allow(non_snake_case, clippy::too_many_arguments)]
             #[allow(clippy::needless_lifetimes)]
             #tracing_instrument_attr
